@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBugReports } from "@/app/api/bug-reports/route";
+import { csrfMiddleware } from "@/lib/security/csrf";
 import {
   DEFAULT_ALERT_RULES,
   bugReportToExceptionEvent,
@@ -115,6 +116,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const csrfError = csrfMiddleware(request);
+  if (csrfError) return csrfError;
+
   let payload: unknown;
   try {
     payload = await request.json();

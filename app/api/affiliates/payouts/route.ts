@@ -7,6 +7,7 @@ import {
   requestPayout,
 } from '@/lib/affiliate-store';
 import { checkRateLimit, createRateLimitResponse } from '@/lib/security/rate-limit';
+import { csrfMiddleware } from '@/lib/security/csrf';
 
 const PAYOUTS_RATE_LIMIT = { maxRequests: 5, windowMs: 60 * 60 * 1000, scope: 'payouts' };
 
@@ -54,6 +55,9 @@ export async function GET(request: NextRequest) {
  * or a duplicate in-flight request) can never pay twice.
  */
 export async function POST(request: NextRequest) {
+  const csrfError = csrfMiddleware(request);
+  if (csrfError) return csrfError;
+
   try {
     const body = await request.json();
     const { walletAddress, amount, destinationAddress, idempotencyKey } = body;
