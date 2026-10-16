@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { BUG_CATEGORIES, PRIORITY_LEVELS, type BugReport, type BugReportFormData, type RewardCalculation } from '../types/bug-report';
 import { findSimilarReports } from '../lib/bug-reports-pagination';
+import { dispatchInvariantAlert, type AlertSeverity } from '../lib/invariant-monitor/report';
 import RewardCalculator from './RewardCalculator';
 import ScreenshotUpload from './ScreenshotUpload';
 import Button from './Button';
@@ -22,6 +23,22 @@ const FIELD_ELEMENT_IDS: Record<string, string> = {
   actualBehavior: 'bug-actual',
   reporterEmail: 'bug-email',
   agreeToTerms: 'agreeToTerms',
+};
+
+const PRIORITY_TO_SEVERITY: Record<string, AlertSeverity> = {
+  critical: 'critical',
+  high: 'major',
+  medium: 'minor',
+  low: 'info',
+};
+
+const SEVERITY_THRESHOLD: AlertSeverity = 'major';
+
+const SEVERITY_RANK: Record<AlertSeverity, number> = {
+  critical: 4,
+  major: 3,
+  minor: 2,
+  info: 1,
 };
 
 export const BugReportForm: React.FC<BugReportFormProps> = ({
@@ -57,6 +74,39 @@ export const BugReportForm: React.FC<BugReportFormProps> = ({
   const activeErrorEntries = useMemo(
     () => Object.entries(errors).filter(([, message]) => Boolean(message)),
     [errors]
+  );
+
+  const dispatchViolationAlert = useCallback(
+    (data: BugReportFormData, duplicateMatches: typeof similarReports) => {
+      const severity = PRIORITY_TO_SEVERITY[data.priority] ?? 'minor';
+      const meetsThreshold = SEVERITY_RANK[severity] >= SEVERITY_RANK[SEVERITY_THRESHOLD];
+
+      const affectedRecordIds = duplicateMatches.map((match) => match.report.id);
+      const diffContext = [
+        `title: ${data.title}`,
+        `category: ${data.category}`,
+        `priority: ${data.priority}`,
+        `buildVersion: ${data.buildVersion || 'unknown'}`,
+        `duplicateMatches: ${duplicateMatches.length}`,
+      ].join('\n');
+
+      void dispatchInvariantAlert({
+        severity,
+        immediate: meetsThreshold,
+        title: `Bug report invariant violation: ${data.title}`,
+        message: data.description,
+        diffContext,
+        affectedRecordIds,
+        metadata: {
+          category: data.category,
+          priority: data.priority,
+          reporterEmail: data.reporterEmail || null,
+        },
+      }).catch(() => {
+        // Alert dispatch must never block bug report submission.
+      });
+    },
+    [],
   );
 
   const focusField = (fieldKey: string) => {
@@ -124,6 +174,7 @@ export const BugReportForm: React.FC<BugReportFormProps> = ({
       return;
     }
 
+    dispatchViolationAlert(formData, similarReports);
     onSubmit(formData);
   };
 
