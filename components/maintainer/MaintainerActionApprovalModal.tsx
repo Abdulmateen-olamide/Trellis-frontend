@@ -9,6 +9,7 @@ import {
   HIGH_IMPACT_MAINTAINER_ACTIONS,
 } from '@/lib/maintainer-approvals/types';
 import { MaintainerApprovalService, determineImpactLevel } from '@/lib/maintainer-approvals/service';
+import useFocusTrap from '@/components/useFocusTrap';
 
 export interface MaintainerActionApprovalModalProps {
   isOpen: boolean;
@@ -41,6 +42,11 @@ export function MaintainerActionApprovalModal({
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<SignedIntentReceipt | null>(null);
   const [isSigning, setIsSigning] = useState(false);
+
+  const trapRef = useFocusTrap<HTMLDivElement>({
+    active: isOpen,
+    onEscape: onClose,
+  });
 
   if (!isOpen) return null;
 
@@ -95,6 +101,7 @@ export function MaintainerActionApprovalModal({
 
   return (
     <div
+      ref={trapRef}
       role="dialog"
       aria-modal="true"
       aria-labelledby="approval-modal-title"
