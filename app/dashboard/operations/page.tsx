@@ -35,6 +35,7 @@ import {
 } from '@/lib/idempotency';
 import { useApiMetricsStore } from '@/store/apiMetricsStore';
 import { DeadLetterPanel } from './DeadLetterPanel';
+import { SideEffectDeadLetterPanel } from './SideEffectDeadLetterPanel';
 import CacheManager, { type CacheDiagnostic } from '@/lib/cache-manager';
 
 const MINUTE_MS = 60 * 1000;
@@ -825,7 +826,10 @@ export default function OperationsDashboardPage() {
           </div>
         </section>
       </div>
-        <div className="mx-auto max-w-6xl"><DeadLetterPanel /></div>
+        <div className="mx-auto max-w-6xl space-y-8">
+          <DeadLetterPanel />
+          <SideEffectDeadLetterPanel />
+        </div>
     </main>
   );
 }
