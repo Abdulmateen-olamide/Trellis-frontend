@@ -1,22 +1,31 @@
 import {
   DEFAULT_ALERT_RULES,
+  OPERATIONAL_CSV_HEADERS,
+  aggregateOperationalUptimeStats,
+  aggregateTopFailingRoutes,
   appendOperationalMetricSample,
   bugReportToExceptionEvent,
   buildErrorTrend,
   buildExceptionTrendReport,
+  buildExecutiveOperationalReport,
   buildOperationalHealth,
   createAlertRule,
+  deriveExceptionRoute,
+  escapeCsvCell,
   evaluateAlertRules,
   filterExceptionEvents,
+  formatOperationalMetricsCsv,
+  generateOperationalReportPdf,
   groupExceptionEvents,
   isOperationalMetricSample,
+  normalizeOperationalRoute,
   computePercentile,
   computeRollingLatency,
   evaluateServiceHealth,
   executeSyntheticProbe,
   SyntheticProbeManager,
 } from "@/lib/operational-health";
-import type { ExceptionEvent, OperationalMetricSample, ProbeSampleRecord } from "@/lib/operational-health";
+import type { ExceptionEvent, ExternalServiceHealth, OperationalMetricSample, ProbeSampleRecord } from "@/lib/operational-health";
 import type { BugReport } from "@/types/bug-report";
 
 const baseReport: BugReport = {
@@ -489,3 +498,229 @@ describe("SyntheticProbeManager", () => {
     expect(all.map((s) => s.service)).toEqual(["horizon", "soroban-rpc", "ipfs"]);
   });
 });
+
+describe("executive report data aggregation and top failing routes", () => {
+  test("normalizes dynamic route segments and derives routes from exception events", () => {
+    expect(
+      normalizeOperationalRoute("/api/agents/550e8400-e29b-41d4-a716-446655440000?tab=logs"),
+    ).toBe("/api/agents/:param");
+    expect(normalizeOperationalRoute("marketplace/12345/details#top")).toBe(
+      "/marketplace/:param/details",
+    );
+
+    const explicitRouteEvent = exceptionEvent({
+      route: "/api/governance/987654/vote",
+    });
+    expect(deriveExceptionRoute(explicitRouteEvent)).toBe("/api/governance/:param/vote");
+
+    const rpcEvent = exceptionEvent({ kind: "rpc", component: "soroban-submit" });
+    expect(deriveExceptionRoute(rpcEvent)).toBe("/api/rpc/soroban-submit");
+
+    const apiEvent = exceptionEvent({ kind: "api", component: "claims" });
+    expect(deriveExceptionRoute(apiEvent)).toBe("/api/claims");
+  });
+
+  test("aggregates and ranks top failing routes with critical counts and share percentages", () => {
+    const events: ExceptionEvent[] = [
+      exceptionEvent({
+        id: "r1",
+        route: "/api/rpc/simulate",
+        kind: "rpc",
+        severity: "critical",
+        ts: NOW - 10_000,
+      }),
+      exceptionEvent({
+        id: "r2",
+        route: "/api/rpc/simulate",
+        kind: "rpc",
+        severity: "error",
+        ts: NOW - 5_000,
+      }),
+      exceptionEvent({
+        id: "r3",
+        route: "/api/rpc/simulate",
+        kind: "rpc",
+        severity: "critical",
+        ts: NOW - 2_000,
+      }),
+      exceptionEvent({
+        id: "r4",
+        route: "/api/agents/12345",
+        kind: "api",
+        severity: "error",
+        ts: NOW - 8_000,
+      }),
+      exceptionEvent({
+        id: "r5",
+        route: "/api/agents/67890",
+        kind: "api",
+        severity: "warning",
+        ts: NOW - 4_000,
+      }),
+    ];
+
+    const topRoutes = aggregateTopFailingRoutes(events, 5);
+    expect(topRoutes).toHaveLength(2);
+    expect(topRoutes[0]).toEqual({
+      route: "/api/rpc/simulate",
+      failureCount: 3,
+      criticalCount: 2,
+      errorRatePct: 60,
+      dominantKind: "rpc",
+      lastSeenAt: new Date(NOW - 2_000).toISOString(),
+    });
+    expect(topRoutes[1]).toEqual({
+      route: "/api/agents/:param",
+      failureCount: 2,
+      criticalCount: 0,
+      errorRatePct: 40,
+      dominantKind: "api",
+      lastSeenAt: new Date(NOW - 4_000).toISOString(),
+    });
+  });
+
+  test("aggregates uptime statistics and builds executive operational report", () => {
+    const externalServices: ExternalServiceHealth[] = [
+      {
+        service: "horizon",
+        label: "Stellar Horizon API",
+        endpoint: "https://horizon-testnet.stellar.org",
+        status: "healthy",
+        lastCheckedAt: new Date(NOW).toISOString(),
+        lastLatencyMs: 110,
+        rollingLatency: { p50: 110, p95: 180, p99: 210, min: 90, max: 210, avg: 120, samplesCount: 20 },
+        uptimePercentage: 100,
+        consecutiveFailures: 0,
+        lastError: null,
+      },
+      {
+        service: "soroban-rpc",
+        label: "Stellar Soroban RPC",
+        endpoint: "https://soroban-testnet.stellar.org",
+        status: "degraded",
+        lastCheckedAt: new Date(NOW).toISOString(),
+        lastLatencyMs: 950,
+        rollingLatency: { p50: 420, p95: 1600, p99: 1900, min: 200, max: 1900, avg: 510, samplesCount: 20 },
+        uptimePercentage: 95,
+        consecutiveFailures: 1,
+        lastError: "High latency",
+      },
+    ];
+
+    const metricSamples: OperationalMetricSample[] = [
+      { ts: NOW - 20_000, heapUsedBytes: 60, heapTotalBytes: 100, activeConnections: 4, rpcLatencyMs: 120 },
+      { ts: NOW - 10_000, heapUsedBytes: 85, heapTotalBytes: 100, activeConnections: 6, rpcLatencyMs: 240 },
+    ];
+
+    const uptime = aggregateOperationalUptimeStats({
+      externalServices,
+      metricSamples,
+      slaTargetPercentage: 99.0,
+    });
+
+    expect(uptime.overallUptimePercentage).toBe(97.5);
+    expect(uptime.slaMet).toBe(false);
+    expect(uptime.healthyServicesCount).toBe(1);
+    expect(uptime.degradedServicesCount).toBe(1);
+    expect(uptime.downServicesCount).toBe(0);
+    expect(uptime.avgRpcLatencyMs).toBe(180);
+    expect(uptime.peakHeapUsageRatio).toBe(0.85);
+
+    const events: ExceptionEvent[] = [
+      exceptionEvent({ id: "e1", ts: NOW - 5 * MINUTE, kind: "rpc", severity: "critical", route: "/api/rpc/invoke" }),
+      exceptionEvent({ id: "e2", ts: NOW - 4 * MINUTE, kind: "rpc", severity: "error", route: "/api/rpc/invoke" }),
+      exceptionEvent({ id: "e3", ts: NOW - 3 * MINUTE, kind: "api", severity: "warning", route: "/api/claims" }),
+    ];
+
+    const execReport = buildExecutiveOperationalReport({
+      now: NOW,
+      windowMinutes: 60,
+      bucketMinutes: 5,
+      health: buildOperationalHealth([baseReport], NOW),
+      exceptionEvents: events,
+      metricSamples,
+      externalServices,
+    });
+
+    expect(execReport.windowMinutes).toBe(60);
+    expect(execReport.uptime.overallUptimePercentage).toBe(97.5);
+    expect(execReport.errorTrends.totalExceptions).toBe(3);
+    expect(execReport.errorTrends.criticalExceptions).toBe(1);
+    expect(execReport.errorTrends.rpcExceptions).toBe(2);
+    expect(execReport.errorTrends.trendDirection).toBe("degrading");
+    expect(execReport.topFailingRoutes[0].route).toBe("/api/rpc/invoke");
+    expect(execReport.topFailingRoutes[0].failureCount).toBe(2);
+  });
+});
+
+describe("operational metrics CSV formatting", () => {
+  test("escapes commas, quotes, newlines, and formula injection characters", () => {
+    expect(escapeCsvCell("plain")).toBe("plain");
+    expect(escapeCsvCell("a,b")).toBe('"a,b"');
+    expect(escapeCsvCell('say "hello"')).toBe('"say ""hello"""');
+    expect(escapeCsvCell("=SUM(A1:A2)")).toBe("'=SUM(A1:A2)");
+  });
+
+  test("formats raw time-series metric samples and error trend buckets into structured CSV", () => {
+    const samples: OperationalMetricSample[] = [
+      {
+        ts: Date.parse("2026-02-01T11:58:00.000Z"),
+        heapUsedBytes: 50 * 1024 * 1024,
+        heapTotalBytes: 100 * 1024 * 1024,
+        activeConnections: 5,
+        rpcLatencyMs: 85,
+      },
+      {
+        ts: Date.parse("2026-02-01T11:59:00.000Z"),
+        heapUsedBytes: 75 * 1024 * 1024,
+        heapTotalBytes: 100 * 1024 * 1024,
+        activeConnections: 8,
+        rpcLatencyMs: null,
+      },
+    ];
+
+    const buckets = buildErrorTrend(
+      [
+        exceptionEvent({ id: "ex-csv-1", ts: NOW - 30_000, severity: "critical" }),
+        exceptionEvent({ id: "ex-csv-2", ts: NOW - 20_000, severity: "warning" }),
+      ],
+      { windowMs: MINUTE, bucketMs: MINUTE, now: NOW },
+    );
+
+    const csv = formatOperationalMetricsCsv(samples, buckets);
+    const lines = csv.split("\n");
+
+    expect(lines[0]).toBe(OPERATIONAL_CSV_HEADERS.join(","));
+    expect(lines).toHaveLength(4);
+    expect(lines[1]).toContain("2026-02-01T11:58:00.000Z,system_performance,52428800,104857600,50.00,5,85");
+    expect(lines[2]).toContain("2026-02-01T11:59:00.000Z,system_performance,78643200,104857600,75.00,8,");
+    expect(lines[3]).toContain("2026-02-01T11:59:00.000Z,exception_trend,,,,,,2,2.00,1,0,1");
+  });
+
+  test("generates a printable PDF 1.4 executive report containing uptime, error trends, and top failing routes", () => {
+    const execReport = buildExecutiveOperationalReport({
+      now: NOW,
+      windowMinutes: 60,
+      bucketMinutes: 5,
+      health: buildOperationalHealth([baseReport], NOW),
+      exceptionEvents: [
+        exceptionEvent({ id: "pdf-1", ts: NOW - 60_000, kind: "rpc", severity: "critical", route: "/api/rpc/simulate" }),
+      ],
+      metricSamples: [
+        { ts: NOW - 30_000, heapUsedBytes: 50, heapTotalBytes: 100, activeConnections: 4, rpcLatencyMs: 110 },
+      ],
+    });
+
+    const pdfBytes = generateOperationalReportPdf(execReport);
+    const pdfContent = new TextDecoder().decode(pdfBytes);
+
+    expect(pdfContent.startsWith("%PDF-1.4\n")).toBe(true);
+    expect(pdfContent).toContain("TRELLIS OPERATIONAL HEALTH - EXECUTIVE REPORT");
+    expect(pdfContent).toContain("1. Uptime & Service Reliability Statistics");
+    expect(pdfContent).toContain("3. Error Trends & Alert Rule Evaluation");
+    expect(pdfContent).toContain("4. Top Failing Routes");
+    expect(pdfContent).toContain("/api/rpc/simulate");
+    expect(pdfContent.trim().endsWith("%%EOF")).toBe(true);
+  });
+});
+

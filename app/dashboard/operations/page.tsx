@@ -25,9 +25,15 @@ import {
   type AlertMetric,
   type AlertRule,
   type ExceptionEvent,
+  type ExternalServiceHealth,
   type OperationalHealth,
   type OperationalMetricSample,
 } from '@/lib/operational-health';
+import {
+  buildExecutiveOperationalReport,
+  downloadOperationalMetricsCsv,
+  downloadOperationalReportPdf,
+} from '@/features/analytics/operational-report';
 import {
   DUPLICATE_RATE_WARNING_THRESHOLD,
   buildIdempotencyRateSeries,
@@ -63,7 +69,10 @@ type FilterState = {
   release: string;
 };
 
-type HealthResponse = OperationalHealth & { exceptions?: ExceptionEvent[] };
+type HealthResponse = OperationalHealth & {
+  exceptions?: ExceptionEvent[];
+  externalServices?: ExternalServiceHealth[];
+};
 
 function uniqueValues(events: readonly ExceptionEvent[], key: keyof FilterState): string[] {
   return Array.from(new Set(events.map((event) => event[key]))).sort((a, b) => a.localeCompare(b));
@@ -80,6 +89,8 @@ function groupLabel(dimension: string): string {
 
 export default function OperationsDashboardPage() {
   const [health, setHealth] = useState<OperationalHealth | null>(null);
+  const [externalServices, setExternalServices] = useState<ExternalServiceHealth[]>([]);
+  const [exportStatusMessage, setExportStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<number | null>(null);
@@ -155,6 +166,7 @@ export default function OperationsDashboardPage() {
         setHealth(data);
         setError(null);
         if (Array.isArray(data.exceptions)) setExceptionEvents(data.exceptions);
+        if (Array.isArray(data.externalServices)) setExternalServices(data.externalServices);
       })
       .catch((requestError: Error) => {
         if (!cancelled) setError(requestError.message);
@@ -266,6 +278,31 @@ export default function OperationsDashboardPage() {
     });
   }, [now, exceptionEvents, windowMinutes, activeFilters, alertRules]);
 
+  const executiveReport = useMemo(() => {
+    const referenceNow = now ?? Date.now();
+    return buildExecutiveOperationalReport({
+      now: referenceNow,
+      windowMinutes,
+      health,
+      exceptionEvents,
+      trendReport: report,
+      metricSamples,
+      externalServices,
+      filters: activeFilters,
+      rules: alertRules,
+    });
+  }, [now, windowMinutes, health, exceptionEvents, report, metricSamples, externalServices, activeFilters, alertRules]);
+
+  const handleExportPdf = () => {
+    downloadOperationalReportPdf(executiveReport);
+    setExportStatusMessage('Executive PDF operational report generated and downloaded.');
+  };
+
+  const handleExportCsv = () => {
+    downloadOperationalMetricsCsv(metricSamples, report?.buckets ?? []);
+    setExportStatusMessage('Raw time-series operational metrics exported as CSV.');
+  };
+
   const chartData = useMemo(
     () =>
       report?.buckets.map((bucket) => ({
@@ -320,15 +357,130 @@ export default function OperationsDashboardPage() {
   return (
     <main className="min-h-screen px-4 py-12 text-white sm:px-6 lg:px-8">
       <div className="mx-auto max-w-6xl">
-        <header className="mb-10">
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-trellis-leaf">
-            Maintainer operations
-          </p>
-          <h1 className="mt-3 text-4xl font-bold">Operational health</h1>
-          <p className="mt-3 max-w-2xl text-gray-300">
-            A redacted view of unresolved work, stale records, reconciliation drift, and user-impacting incidents.
-          </p>
+        <header className="mb-10 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-trellis-leaf">
+              Maintainer operations
+            </p>
+            <h1 className="mt-3 text-4xl font-bold">Operational health</h1>
+            <p className="mt-3 max-w-2xl text-gray-300">
+              A redacted view of unresolved work, stale records, reconciliation drift, and user-impacting incidents.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              data-testid="export-pdf-report-btn"
+              className="rounded-md bg-trellis-leaf px-4 py-2 text-sm font-semibold text-black focus:outline-none focus:ring-2 focus:ring-trellis-leaf"
+            >
+              Export PDF Report
+            </button>
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              data-testid="export-metrics-csv-btn"
+              className="rounded-md border border-trellis-leaf px-4 py-2 text-sm font-semibold text-trellis-leaf focus:outline-none focus:ring-2 focus:ring-trellis-leaf"
+            >
+              Export CSV
+            </button>
+          </div>
         </header>
+
+        {exportStatusMessage && (
+          <p role="status" aria-live="polite" className="mb-6 rounded-md border border-trellis-leaf/40 bg-trellis-vine/20 p-3 text-sm text-green-200">
+            {exportStatusMessage}
+          </p>
+        )}
+
+        <section aria-labelledby="executive-report-heading" className="mb-10 rounded-lg border border-trellis-vine/30 bg-trellis-vine/10 p-5" data-testid="executive-report-summary">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 id="executive-report-heading" className="text-2xl font-bold">Executive operational summary</h2>
+              <p className="mt-1 text-sm text-gray-400">
+                Aggregated uptime SLA posture, error velocity, and top failing routes for governance and monthly reliability reviews.
+              </p>
+            </div>
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-bold uppercase ${
+                executiveReport.uptime.slaMet
+                  ? 'bg-green-500/20 text-green-300'
+                  : 'bg-red-500/20 text-red-300'
+              }`}
+            >
+              {executiveReport.uptime.slaMet ? 'SLA Passing' : 'SLA Attention'}
+            </span>
+          </div>
+
+          <dl className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded border border-white/10 bg-black/10 p-3">
+              <dt className="text-xs uppercase tracking-wide text-gray-400">Overall Uptime</dt>
+              <dd className="mt-1 text-2xl font-bold text-white">
+                {executiveReport.uptime.overallUptimePercentage.toFixed(1)}%
+              </dd>
+              <p className="mt-1 text-xs text-gray-400">
+                Target: {executiveReport.uptime.slaTargetPercentage.toFixed(1)}%
+              </p>
+            </div>
+            <div className="rounded border border-white/10 bg-black/10 p-3">
+              <dt className="text-xs uppercase tracking-wide text-gray-400">Error Trend ({executiveReport.windowMinutes}m)</dt>
+              <dd className="mt-1 text-2xl font-bold capitalize text-white">
+                {executiveReport.errorTrends.trendDirection}
+              </dd>
+              <p className="mt-1 text-xs text-gray-400">
+                {executiveReport.errorTrends.avgErrorsPerMinute.toFixed(2)} avg / {executiveReport.errorTrends.peakErrorsPerMinute.toFixed(2)} peak per min
+              </p>
+            </div>
+            <div className="rounded border border-white/10 bg-black/10 p-3">
+              <dt className="text-xs uppercase tracking-wide text-gray-400">Critical / RPC Errors</dt>
+              <dd className="mt-1 text-2xl font-bold text-white">
+                {executiveReport.errorTrends.criticalExceptions} / {executiveReport.errorTrends.rpcExceptions}
+              </dd>
+              <p className="mt-1 text-xs text-gray-400">
+                {executiveReport.errorTrends.totalExceptions} total window exceptions
+              </p>
+            </div>
+            <div className="rounded border border-white/10 bg-black/10 p-3">
+              <dt className="text-xs uppercase tracking-wide text-gray-400">Top Failing Routes</dt>
+              <dd className="mt-1 text-2xl font-bold text-white">
+                {executiveReport.topFailingRoutes.length}
+              </dd>
+              <p className="mt-1 text-xs text-gray-400">
+                {executiveReport.topFailingRoutes[0]
+                  ? `Highest: ${executiveReport.topFailingRoutes[0].route} (${executiveReport.topFailingRoutes[0].failureCount})`
+                  : 'No route failures recorded'}
+              </p>
+            </div>
+          </dl>
+
+          {executiveReport.topFailingRoutes.length > 0 && (
+            <div className="mt-4 overflow-x-auto">
+              <h3 className="mb-2 text-sm font-semibold text-gray-200">Top failing routes</h3>
+              <table className="min-w-full divide-y divide-trellis-vine/20 text-left text-sm" aria-label="Top failing routes">
+                <thead>
+                  <tr className="text-gray-400">
+                    <th scope="col" className="py-2 pr-4 font-semibold">Route</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Failures</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Critical</th>
+                    <th scope="col" className="py-2 pr-4 font-semibold">Share</th>
+                    <th scope="col" className="py-2 font-semibold">Dominant Kind</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-trellis-vine/10">
+                  {executiveReport.topFailingRoutes.map((routeStat) => (
+                    <tr key={routeStat.route} className="text-gray-300">
+                      <td className="py-2 pr-4 font-mono text-xs text-trellis-leaf">{routeStat.route}</td>
+                      <td className="py-2 pr-4 font-semibold text-white">{routeStat.failureCount}</td>
+                      <td className="py-2 pr-4">{routeStat.criticalCount}</td>
+                      <td className="py-2 pr-4">{routeStat.errorRatePct.toFixed(1)}%</td>
+                      <td className="py-2 uppercase text-xs">{routeStat.dominantKind}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
 
         <section aria-labelledby="performance-heading" className="mb-10">
           <div className="flex flex-wrap items-center justify-between gap-3">

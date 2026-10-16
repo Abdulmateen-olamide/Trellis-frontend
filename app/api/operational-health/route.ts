@@ -56,7 +56,7 @@ function parseFilters(searchParams: URLSearchParams): ExceptionFilters {
 function parseExceptionEvent(value: unknown): ExceptionEvent | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Record<string, unknown>;
-  const { id, ts, kind, severity, component, browserOS, release, code } = candidate;
+  const { id, ts, kind, severity, component, browserOS, release, code, route } = candidate;
   if (typeof id !== "string" || !id) return null;
   if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return null;
   if (typeof kind !== "string" || !(KINDS as readonly string[]).includes(kind)) return null;
@@ -73,6 +73,7 @@ function parseExceptionEvent(value: unknown): ExceptionEvent | null {
     browserOS,
     release,
     ...(typeof code === "string" ? { code } : {}),
+    ...(typeof route === "string" && route.trim() ? { route: route.trim() } : {}),
   };
 }
 
