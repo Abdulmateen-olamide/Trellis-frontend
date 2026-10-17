@@ -65,8 +65,6 @@ export function useConflictDetection(options: ConflictDetectionOptions = {}) {
   const detectionSeqRef = useRef(0);
   const appliedSeqRef = useRef(0);
   const attemptsRef = useRef(0);
-  const lastResolvedRef = useRef<ConflictInfo | null>(null);
-  void lastResolvedRef;
 
   const checkForConflict = useCallback(
     (
@@ -130,7 +128,6 @@ export function useConflictDetection(options: ConflictDetectionOptions = {}) {
         };
       }
 
-      lastResolvedRef.current = current;
       setState(EMPTY_STATE);
       const resolution: ConflictResolution = {
         action,
@@ -147,7 +144,6 @@ export function useConflictDetection(options: ConflictDetectionOptions = {}) {
   const clearConflict = useCallback(() => {
     const current = stateRef.current.conflict;
     attemptsRef.current = 0;
-    lastResolvedRef.current = current;
     setState(EMPTY_STATE);
     if (current) {
       optionsRef.current.onResolve?.({
