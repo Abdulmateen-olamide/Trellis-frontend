@@ -57,11 +57,11 @@ function defaultSource(): string {
  * `null` channel makes delivery a no-op, which is what lets the envelope be
  * built and validated without broadcasting it.
  */
-export function createSessionSyncMessage<TRage extends SessionSyncEventName>(
-  event: TRage,
-  payload: SessionSyncPayload<TRage>,
+export function createSessionSyncMessage<TPayload extends SessionSyncEventName>(
+  event: TPayload,
+  payload: SessionSyncPayload<TPayload>,
   source: string,
-): DomainEventEnvelope<SessionSyncPayload<TRage>> {
+): DomainEventEnvelope<SessionSyncPayload<TPayload>> {
   return publishDomainEvent(event, payload, {
     delivery: createBroadcastDelivery(null),
     source,
@@ -81,6 +81,21 @@ export interface SessionTabSyncOptions {
   onLegacy?: (context: LegacyDomainEventContext, payload: unknown) => void;
 }
 
+/**
+ * Operational edge cases and failure modes for cross-tab sync:
+ *
+ * - Duplicate submissions: the same logical mutation may arrive from multiple
+ *   tabs or be replayed by the browser. Consumers must key on `idOf` or the
+ *   envelope `id` to dedupe; this class delivers every valid envelope and
+ *   does not itself dedupe.
+ * - Stale versions: an envelope from a future or past schema version is routed
+ *   to `onLegacy` and never reaches `subscribe` listeners.
+ * - Retry storms: `publish` throws synchronously on invalid payloads and
+ *   never broadcasts partial data; callers own backoff and idempotency keys.
+ * - Rollback/recovery: close() detaches the channel and clears listeners; a
+ *   reloaded tab re-registers with a fresh source id and re-syncs from the
+ *   server of record rather than relying on in-flight broadcasts.
+ */
 export class SessionTabSync {
   private readonly channel: BroadcastChannel | null;
   private readonly source: string;

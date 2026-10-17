@@ -21,8 +21,8 @@ The chaos suite exercises interrupted user and background workflows without rely
 
 The suite lives in `tests/chaos/offline-queue.chaos.test.ts` and is run with `npm test -- chaos.` It uses three harness primitives:
 
-- ` createChaosClock()` — a deterministic `now()` source that only advances when a test calls `tick(ms)`. Retry backoff and queue expiry are asserted against this clock, not `Date.now()` or `setTimeout`.
-- ` createChaosFetch(script)` — a fetch replacement that returns programmed responses or throws programmed network errors in order. The script is an explicit array, so a given test always sees the same sequence.
+- `createChaosClock()` — a deterministic `now()` source that only advances when a test calls `tick(ms)`. Retry backoff and queue expiry are asserted against this clock, not `Date.now()` or `setTimeout`.
+- `createChaosFetch(script)` — a fetch replacement that returns programmed responses or throws programmed network errors in order. The script is an explicit array, so a given test always sees the same sequence.
 - `seedQueue(entries)` — writes a known queue state into the versioned local-storage key before the code under test loads.
 
 The cases covered by the suite are:
