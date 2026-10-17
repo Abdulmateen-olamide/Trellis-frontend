@@ -4,7 +4,7 @@
 
 ## Conflict handling
 
-A conflict stays in the queue and blocks later entries, preserving FIFO semantics. The offline banner shows the request label and response status. After reviewing current server state, the user may explicitly retry the same request or discard it. A retry resets its failure counter; it does not rewrite the request body or version header, so it can conflict again until the caller supplies a request based on current state. Other client errors (`400`–`499`, except `409`/`412`) remain terminal and are dropped; server errors and network failures are retained for bounded retry.
+A conflict stays in the queue and blocks later entries, preserving FIFO semantics. The offline banner shows the request label and response status. After reviewing current server state, the user may explicitly retry the same request or discard it. A retry resets its failure counter; it does not rewrite the request body or version header, so it can conflict again until the caller supplies a request based on current state. Other client errors (`400`--`499`, except `409`/`412`) remain terminal and are dropped; server errors and network failures are retained for bounded retry.
 
 ## Operational edge cases and recovery
 
@@ -21,9 +21,9 @@ The chaos suite exercises interrupted user and background workflows without rely
 
 The suite lives in `tests/chaos/offline-queue.chaos.test.ts` and is run with `npm test -- chaos.` It uses three harness primitives:
 
-- `createChaosClock()` — a deterministic `now()` source that only advances when a test calls `tick(ms)`. Retry backoff and queue expiry are asserted against this clock, not `Date.now()` or `setTimeout`.
--  `createChaosFetch(script)` — a fetch replacement that returns programmed responses or throws programmed network errors in order. The script is an explicit array, so a given test always sees the same sequence.
--  `seedQueue(entries)` — writes a known queue state into the versioned local-storage key before the code under test loads.
+- ` createChaosClock()` — a deterministic `now()` source that only advances when a test calls `tick(ms)`. Retry backoff and queue expiry are asserted against this clock, not `Date.now()` or `setTimeout`.
+- ` createChaosFetch(script)` — a fetch replacement that returns programmed responses or throws programmed network errors in order. The script is an explicit array, so a given test always sees the same sequence.
+- `seedQueue(entries)` — writes a known queue state into the versioned local-storage key before the code under test loads.
 
 The cases covered by the suite are:
 
