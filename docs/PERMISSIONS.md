@@ -178,6 +178,33 @@ if (!decision.allowed) return deniedResponse(decision);
 `deniedResponse` builds the same `403` shape as `requirePermission`, so the two
 paths cannot drift.
 
+## Privacy-safe exports
+
+`POST /api/export` keeps its existing request body, response formats, and
+`schemaVersion: "2.0"` metadata contract. The server derives the caller's role
+from the signed actor token; a role supplied in the body is not accepted. The
+export projection is an allowlist: only fields registered for the selected
+export type can appear. Registered fields are redacted according to the
+caller's role, while unregistered source fields are omitted even for admins.
+When fields are absent from a record, JSON omits them and CSV leaves the
+corresponding registered column blank.
+
+Batch fetches retry twice by default with a 100 ms delay. After retries are
+exhausted, or if the stream writer fails, the response stream fails rather than
+being closed as a successful partial download. A cancelled request is not
+retried once its abort signal is observed. Clients should discard a failed or
+cancelled download and retry the whole request; exports do not support
+checkpoints or resuming from a record offset. An empty successful export remains
+a valid empty JSON array or header-only CSV document.
+
+For recovery, first restore connectivity to the export's data source and retry
+the request. If a deployment must be rolled back, keep the previous endpoint
+disabled until it has the allowlisted projection and failure propagation too;
+rolling back to a version that copies raw records can reintroduce field leaks.
+No stored export data needs cleanup because responses are streamed and not
+persisted by this endpoint. The existing API contract is retained, so clients
+do not need a migration.
+
 ## Configuration
 
 ```bash
