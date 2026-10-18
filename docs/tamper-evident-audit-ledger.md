@@ -2,6 +2,10 @@
 
 The security API records confirmed administrator audit events in a per-contract chain. The affiliate payout route records queued and rejected payout requests in a per-wallet chain. Each entry includes a server timestamp, sequence number, event category, producer/actor, payload, previous hash, and SHA-256 hash over RFC 8785 canonical JSON with the `trellis.audit-ledger.v1` domain prefix.
 
+Administrative emergency feature-flag changes append to the `admin-config:global` stream. Authorized requests record `attempted` before mutation and then `succeeded` or `failed`; permission denials record `denied`. Payloads contain only the setting name and requested boolean, never request headers or secrets. Retrying after a timeout is safe because setting the emergency state is idempotent; each HTTP retry is retained as a separate attempt. If the ledger cannot record the initial attempt, the mutation is not performed. If writing the outcome fails after the in-memory mutation, the caller may see a server error despite the state having changed; inspect the flag state and ledger before retrying.
+
+The emergency flag endpoint remains process-scoped as before. A process restart clears both its emergency state and this in-memory audit stream. During rollback, export and retain the stream before reverting code; restore intended flag state through the existing administrative endpoint after deployment. There is no migration because the endpoint response and request contracts are unchanged; audit metadata is additive in the internal ledger only.
+
 `POST /api/security` keeps its existing `record-audit` and `audit-history` response fields. Audit-history responses add a `ledger` export containing the entries for that contract, the chain head, and a verification result. The `ledger-export` action can export a selected stream for maintainer review. Consumers should verify the export before relying on it.
 
 ## Privacy-preserving evidence bundles
