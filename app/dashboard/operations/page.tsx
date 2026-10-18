@@ -96,6 +96,7 @@ export default function OperationsDashboardPage() {
   const [dependencyFallbacks, setDependencyFallbacks] = useState<DependencyFallbackGuidance[]>([]);
   const [exportStatusMessage, setExportStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [healthReloadToken, setHealthReloadToken] = useState(0);
   const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState<number | null>(null);
   const [windowMinutes, setWindowMinutes] = useState<number>(60);
