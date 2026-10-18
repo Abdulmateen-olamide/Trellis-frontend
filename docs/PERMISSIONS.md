@@ -65,7 +65,21 @@ run_retention_cleanup: {
     guest: DENY,
   },
 },
+repair_records: {
+  description: 'Repair orphaned or inconsistent derived records',
+  grants: {
+    admin: { scope: 'global', conditions: [{ type: 'requires_confirmation' }] },
+    maintainer: DENY,
+    contributor: DENY,
+    viewer: DENY,
+    guest: DENY,
+  },
+},
 ```
+
+`repair_records` is the authorization gate for the projection reconciliation
+repair job. It is admin-only and requires explicit confirmation; starting and
+resuming checkpointed repairs both re-check authorization.
 
 `PERMISSION_MATRIX` is that declaration expanded to one entry per action per
 role. Because `MATRIX` is typed `Record<Action, ActionDefinition>`, adding an
