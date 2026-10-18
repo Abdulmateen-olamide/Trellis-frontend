@@ -38,6 +38,9 @@ npm run diagnostics -- --fix
 
 # Display the full catalog of common failure modes, fixes, and rollback commands
 npm run diagnostics -- --show-fixes
+
+# Run the offline executable verification suite for the diagnostics behavior
+npm run validate:diagnostics
 ```
 
 ---
@@ -48,15 +51,18 @@ npm run diagnostics -- --show-fixes
 | :--- | :--- | :--- | :--- | :--- |
 | `ENV_MISSING_LOCAL` | No `.env.local` or `.env` file detected | Fresh repository clone without environment initialization | `WARN` (`FAIL` in `--strict`) | `cp .env.example .env.local` or `npm run diagnostics -- --fix` |
 | `ENV_SCHEMA_INVALID` | `AppConfig Schema & Security Rules` fails | Staging/production mode configured with `http://`, `localhost`, or `testnet`, or placeholder/short `WEBHOOK_SECRET` (`< 32` chars) | `FAIL` | Align `.env.local` with `.env.example` or generate a 32+ char secret via `openssl rand -base64 48` |
-| `DEPS_MISSING_MODULES` | `node_modules` missing or missing critical packages | Dependencies not installed or interrupted `npm install` | `FAIL` / `WARN` | `npm install` |
+| `DEPS_MISSING_MODULES` | `node_modules` missing or missing critical packages | Dependencies not installed or interrupted `npm install` | `FAIL` / `WARN` | `npm ci` |
+| `DEPS_DECLARED_MISSING` | A package declared in `package.json` is absent from `node_modules` | Install was interrupted or the installed tree is stale | `FAIL` | `npm ci` to reproduce `package-lock.json` |
 | `SEED_DATA_CORRUPTED` | `Seed Data & Baseline Invariants` fails | Local edits to `scripts/fixtures/recovery-baseline.json` violated primary key uniqueness, Stellar address format, or financial rules | `FAIL` | `git checkout -- scripts/fixtures/recovery-baseline.json` |
 | `NETWORK_RPC_UNREACHABLE` | Stellar Horizon, Soroban RPC, or IPFS gateway unreachable | Offline workspace, corporate proxy/firewall, DNS failure, or upstream HTTP 429/5xx | `WARN` (`FAIL` in `--strict`) | Use `npm run diagnostics -- --skip-network` for offline work; built-in mocks handle fallback |
+| `NETWORK_AUTH_DENIED` | A service probe receives HTTP 401 or 403 | The configured endpoint requires credentials, or the supplied access policy denies the request | `WARN` (`FAIL` in `--strict`) | Verify endpoint access through the approved credential provider; never put tokens in URLs or diagnostic output |
 | `PORT_CONFLICT | Port `3000` or `8080` currently in use | Orphaned Next.js dev server, Docker container, or background service occupying the port | `FAIL`| `npx kill-port 3000 8080` or stop the reported PID |
 | `NEXT_CACHE_CORRUPTED` | Stale `.next` build artifacts causing webpack/HMR failures | Branch switching or interrupted `next build` | Manual / `--fix` | `rm -rf .next` |
 
 ### Security & Privacy Edge Cases
 - **Zero Secret Leakage**: When `WEBHOOK_SECRET` or `PERMISSION_TOKEN_SECRET`fails validation (e.g., fewer than 32 characters or matching placeholder patterns like `change_me`), diagnostics report the violated policy name without ever echoing the secret value to `stdout`, `stderr`, or JSON output.
 - **Offline Development Mode**: External network probes default to `WARN` rather than `FAIL` (unless `--strict` is passed) so contributors working offline or on restricted networks can still validate local code, seed data, and configuration.
+- **Transient Service Failures**: Network probes retry up to three times with bounded exponential backoff for connection failures, HTTP 429, and HTTP 5xx. HTTP 401/403 are reported immediately as authorization warnings and are not retried. Use `--skip-network` to proceed with local checks while offline.
 
 ---
 
@@ -88,10 +94,13 @@ npm run diagnostics -- --skip-network
 ### 3. Rollback Corrupted Dependency Tree or Build Cache
 If dependency upgrades or build caches cause module resolution failures:
 ```bash
-# Purge build cache and node_modules, then reinstall cleanly
-rm -rf .next node_modules
-npm install
+# Recreate the dependency tree from the unchanged lockfile
+npm ci
+
+# Clear only generated build output if the dependency tree is healthy
+rm -rf .next
 ```
+`npm ci` replaces `node_modules` and does not rewrite `package.json` or `package-lock.json`. If a local install still fails, preserve the npm error details, verify registry access and any required authorization through the approved credential provider, then rerun diagnostics; do not commit credential files. For a mistaken environment auto-fix, remove only the generated `.env.local` as shown above.
 
 ---
 
