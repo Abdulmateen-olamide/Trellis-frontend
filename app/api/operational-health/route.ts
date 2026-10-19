@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBugReports } from "@/app/api/bug-reports/route";
+import { csrfMiddleware } from "@/lib/security/csrf";
 import {
   DEFAULT_ALERT_RULES,
   bugReportToExceptionEvent,
@@ -11,6 +12,7 @@ import {
   type ExceptionKind,
   type ExceptionSeverity,
 } from "@/lib/operational-health";
+import { buildDependencyFallbacks } from "@/lib/dependency-degradation";
 
 const MINUTE_MS = 60 * 1000;
 const MAX_WINDOW_MINUTES = 24 * 60;
@@ -55,7 +57,7 @@ function parseFilters(searchParams: URLSearchParams): ExceptionFilters {
 function parseExceptionEvent(value: unknown): ExceptionEvent | null {
   if (!value || typeof value !== "object") return null;
   const candidate = value as Record<string, unknown>;
-  const { id, ts, kind, severity, component, browserOS, release, code } = candidate;
+  const { id, ts, kind, severity, component, browserOS, release, code, route } = candidate;
   if (typeof id !== "string" || !id) return null;
   if (typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return null;
   if (typeof kind !== "string" || !(KINDS as readonly string[]).includes(kind)) return null;
@@ -72,6 +74,7 @@ function parseExceptionEvent(value: unknown): ExceptionEvent | null {
     browserOS,
     release,
     ...(typeof code === "string" ? { code } : {}),
+    ...(typeof route === "string" && route.trim() ? { route: route.trim() } : {}),
   };
 }
 
@@ -96,6 +99,7 @@ export async function GET(request: NextRequest) {
     await syntheticProbeManager.runProbes();
   }
   const externalServices = syntheticProbeManager.getAllServicesHealth();
+  const dependencyFallbacks = buildDependencyFallbacks(externalServices);
   const events = getExceptionEvents();
   const exceptionTrend = buildExceptionTrendReport(events, {
     windowMs: windowMinutes * MINUTE_MS,
@@ -111,10 +115,14 @@ export async function GET(request: NextRequest) {
     exceptions: events.slice(-MAX_EVENTS_IN_RESPONSE),
     externalServices,
     syntheticProbes: externalServices,
+    dependencyFallbacks,
   });
 }
 
 export async function POST(request: NextRequest) {
+  const csrfError = csrfMiddleware(request);
+  if (csrfError) return csrfError;
+
   let payload: unknown;
   try {
     payload = await request.json();
